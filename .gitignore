@@ -1,0 +1,11 @@
+__pycache__/
+logs/
+venv/
+output/
+news.db
+news_cache.db
+news_generator.log
+digest_*.mp3
+digest_*.md
+*.log
+news_*
