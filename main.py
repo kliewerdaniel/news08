@@ -47,7 +47,7 @@ CONFIG = {
         "max_clusters": 50,
         "target_segments": 25
     },
-    "output": {"max_broadcast_length": 90000}
+    "output": {"max_broadcast_length": 900000000}
 }
 
 @dataclass
