@@ -697,7 +697,7 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
                         self.logger.info(f"Processing segment {i+1}/{len(segments)}: {segment.topic}")
                         
                         # Generate the script for this single segment
-                        script_intro = f"Now, an update on {segment.topic}." if i > 0 else f"Welcome to your live news briefing. First up, {segment.topic}."
+                        script_intro = f" {segment.topic}." if i > 0 else f"Welcome to your live news briefing. First up, {segment.topic}."
                         segment_script = await self.generate_segment_script(segment)
                         full_script = self.clean_script_for_tts(f"{script_intro} {segment_script}")
                         
