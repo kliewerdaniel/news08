@@ -37,10 +37,10 @@ CONFIG = {
     "processing": {
         "max_articles_per_feed": 8,
         "min_article_length": 100,
-        "max_clusters": 10,
-        "target_segments": 12
+        "max_clusters": 50,
+        "target_segments": 25
     },
-    "output": {"max_broadcast_length": 10000}
+    "output": {"max_broadcast_length": 90000}
 }
 
 @dataclass
