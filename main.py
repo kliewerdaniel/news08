@@ -37,8 +37,8 @@ if edge_tts_available:
 CONFIG = {
     "ollama_api": {"base_url": "http://localhost:11434"},
     "models": {
-        "summary_model": "mistral:latest",
-        "broadcast_model": "mistral:latest",  # Simplified to use same model
+        "summary_model": "mistral-small:24b-instruct-2501-q8_0",
+        "broadcast_model": "mistral-small:24b-instruct-2501-q8_0",  # Simplified to use same model
         "embedding_model": "nomic-embed-text"
     },
     "processing": {
