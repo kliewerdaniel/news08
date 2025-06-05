@@ -21,6 +21,13 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib.util
 
+# Add new dependencies for audio playback
+import queue
+import threading
+import io
+from pydub import AudioSegment
+from pydub.playback import play
+
 # Check for optional dependencies
 edge_tts_available = importlib.util.find_spec("edge_tts") is not None
 if edge_tts_available:
@@ -117,8 +124,31 @@ class PerformanceMonitor:
             'success_rate': 1 - (self.metrics['errors'] / len(times)) if times else 1
         }
 
+# This new function will handle audio playback
+def play_audio_from_queue(audio_queue: queue.Queue):
+    """
+    Continuously fetches audio data from a queue and plays it.
+    Runs in a separate thread.
+    """
+    while True:
+        try:
+            # Wait until an item is available in the queue
+            audio_data = audio_queue.get()
+            
+            # Use PyDub to play the in-memory audio data
+            audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
+            play(audio_segment)
+            
+            # Mark the task as done
+            audio_queue.task_done()
+        except Exception as e:
+            logging.error(f"Audio playback error: {e}")
+            # Allow the loop to continue
+            continue
+
 class NewsGenerator:
-    def __init__(self, feeds_file: str = "feeds.yaml", topic: Optional[str] = None, guidance: Optional[str] = None):
+    def __init__(self, audio_queue: queue.Queue, feeds_file: str = "feeds.yaml", topic: Optional[str] = None, guidance: Optional[str] = None):
+        self.audio_queue = audio_queue # Add this line
         self.feeds_file = feeds_file
         self.db_path = "news_cache.db"
         self.circuit_breaker = CircuitBreaker()
@@ -482,7 +512,7 @@ class NewsGenerator:
                 continue
 
             cluster_articles.sort(key=lambda x: x.importance_score, reverse=True)
-            topic = self.extract_topic(articles[:2])
+            topic = self.extract_topic(cluster_articles[:2]) # Use cluster_articles for topic extraction
             selected_articles = cluster_articles[:2]
             avg_importance = np.mean([a.importance_score for a in selected_articles])
 
@@ -519,37 +549,32 @@ class NewsGenerator:
                 word_counts[word] = word_counts.get(word, 0) + 1
             return max(word_counts, key=word_counts.get)
 
-        return articles[0].title.split()[:2]
+        return articles[0].title.split()[:2] # Fallback to first two words of the first article's title
 
-    async def generate_broadcast_script(self, segments: List[BroadcastSegment]) -> str:
-        """Generate professional broadcast script"""
-        script_parts = []
-        current_time = datetime.now().strftime("%A, %B %d")
+    # In NewsGenerator class, replace generate_audio_smart with this:
+    async def generate_and_queue_audio(self, script: str):
+        """Generates audio from a script and puts it into the queue."""
+        if not edge_tts_available:
+            self.logger.error("Cannot generate audio: edge_tts library not found.")
+            return
 
-        # Opening
-        script_parts.append(f"Today's news briefing for {current_time}.")
+        try:
+            self.logger.info("Generating audio for a new segment...")
+            communicate = edge_tts.Communicate(script, "en-US-JennyNeural")
+            
+            # Stream the audio into an in-memory buffer
+            audio_buffer = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_buffer.write(chunk["data"])
+            
+            # Rewind the buffer and put its content into the queue
+            audio_buffer.seek(0)
+            self.audio_queue.put(audio_buffer.read())
+            self.logger.info("Audio segment added to the playback queue.")
 
-        for segment in segments:
-            segment_script = await self.generate_segment_script(segment)
-            segment.content = segment_script
-            script_parts.append(segment_script)
-
-        # Closing
-        script_parts.append("That concludes today's news update.")
-
-        full_script = " ".join(script_parts)
-
-        # Trim if needed
-        if len(full_script) > CONFIG["output"]["max_broadcast_length"]:
-            full_script = full_script[:CONFIG["output"]["max_broadcast_length"]]
-
-        async with aiohttp.ClientSession() as session:
-            # Refinement prompt
-            if self.guidance:
-                self.logger.info("Applying refinement prompt to the full script.")
-                full_script = await self.refine_script(session, full_script, self.guidance)
-
-        return self.clean_script_for_tts(full_script)
+        except Exception as e:
+            self.logger.error(f"Failed to generate or queue audio: {e}")
 
     async def generate_segment_script(self, segment: BroadcastSegment) -> str:
         """Generate segment script"""
@@ -587,149 +612,139 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
             self.logger.error(f"Network error during script generation LLM call: {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error during script generation LLM call: {e}")
-
-        # Fallback
-        if segment.articles:
-            return f"In {segment.topic} news, {segment.articles[0].title}."
-        return f"Updates on {segment.topic}."
+        return "Failed to generate news segment." # Fallback
 
     async def refine_script(self, session: aiohttp.ClientSession, script: str, guidance: str) -> str:
-        """Refine the generated script based on guidance using aiohttp"""
-        prompt = f"""Refine the following news script based on the provided guidance.
-
-        Original Script:
-        {script}
-
-        Guidance for refinement:
-        {guidance}
-
-        Return the refined script:"""
-
+        """Refine the full script based on guidance."""
+        prompt = f"Refine the following news script based on this guidance: '{guidance}'.\n\nScript: {script}"
         try:
             async with session.post(
                 f"{CONFIG['ollama_api']['base_url']}/api/generate",
                 json={
-                    'model': CONFIG["models"]["broadcast_model"], # Use broadcast model for refinement
+                    'model': CONFIG["models"]["broadcast_model"],
                     'prompt': prompt,
                     'stream': False,
-                    'options': {'temperature': 0.5, 'max_tokens': CONFIG["output"]["max_broadcast_length"]}
+                    'options': {'temperature': 0.5, 'max_tokens': 500}
                 },
-                timeout=aiohttp.ClientTimeout(total=60)
+                timeout=aiohttp.ClientTimeout(total=45)
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
-                self.logger.info("Script refined successfully.")
                 return data['response'].strip()
-
-        except aiohttp.ClientResponseError as e:
-            error_detail = await e.response.text() if e.response else "No response body"
-            self.logger.error(f"Script refinement LLM API error (status: {e.status}): {error_detail}")
-            return script # Return original script on error
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network error during script refinement LLM call: {e}")
-            return script # Return original script on error
         except Exception as e:
-            self.logger.error(f"Unexpected error during script refinement LLM call: {e}")
-            return script # Return original script on error
+            self.logger.error(f"Failed to refine script: {e}")
+            return script # Return original script on failure
 
     def clean_script_for_tts(self, script: str) -> str:
-        """Clean script for TTS"""
-        script = re.sub(r'[#*_~`|]', '', script)
-        script = re.sub(r'https?://\S+', '', script)
-        script = script.replace('%', ' percent ').replace('&', ' and ')
-        return re.sub(r'\s+', ' ', script).strip()
+        """Clean script for better TTS playback"""
+        script = re.sub(r'\[.*?\]', '', script)  # Remove text in brackets
+        script = re.sub(r'\s+', ' ', script).strip() # Remove extra whitespace
+        script = script.replace('...', '...') # Ensure ellipses are handled correctly
+        return script
 
-    async def generate_audio_smart(self, script: str, output_file: str):
-        """Audio generation using Edge TTS."""
-        try:
-            if not edge_tts_available:
-                raise ModuleNotFoundError("Edge TTS is not available. Please install it using 'pip install edge-tts'.")
+    def save_results(self, script: str, segments: List[BroadcastSegment], filename: str):
+        """Save the generated script and segment details to a Markdown file."""
+        output_dir = Path("broadcast_logs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filepath = output_dir / filename
 
-            voice = "en-US-JennyNeural"
-            communicate = edge_tts.Communicate(script, voice)
-            await communicate.save(output_file)
-            self.logger.info(f"Audio generated with Edge TTS: {output_file}")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(f"# News Broadcast Log - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("## Full Broadcast Script\n")
+            f.write(script)
+            f.write("\n\n---\n\n")
+            f.write("## Broadcast Segments Details\n")
+            for i, segment in enumerate(segments):
+                f.write(f"### Segment {i+1}: {segment.topic}\n")
+                f.write(f"**Importance Score:** {segment.importance:.2f}\n")
+                f.write("**Articles Included:**\n")
+                for article in segment.articles:
+                    f.write(f"- [{article.title}]({article.url})\n")
+                    f.write(f"  - Summary: {article.summary}\n")
+                    f.write(f"  - Sentiment: {article.sentiment_score:.2f}, Importance: {article.importance_score:.2f}, Relevancy: {article.relevancy_score:.2f}\n")
+                f.write("\n")
 
-        except Exception as e:
-            self.logger.error(f"Audio generation failed: {e}")
-            raise
+        self.logger.info(f"Broadcast log saved to {filepath}")
 
-    def save_results(self, script: str, segments: List[BroadcastSegment], output_file: str):
-        """Save enhanced results"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        stats = self.performance_monitor.get_stats()
+    # In NewsGenerator class, replace the 'run' method with this:
+    async def run_continuous(self, fetch_interval_minutes: int = 15):
+        """
+        Main continuous loop to fetch, process, and generate news audio.
+        """
+        self.logger.info("Starting continuous news generation stream.")
+        
+        while True:
+            try:
+                self.logger.info("Fetching new batch of articles...")
+                articles = await self.fetch_feeds_batch()
+                self.performance_monitor.metrics['articles_processed'] += len(articles)
 
-        content = f"""# News Broadcast - {timestamp}
+                if not articles:
+                    self.logger.warning(f"No new articles found. Waiting for {fetch_interval_minutes} minutes.")
+                    await asyncio.sleep(fetch_interval_minutes * 60)
+                    continue
 
-## Performance Stats
-- Articles: {stats['articles_processed']}
-- Success Rate: {stats['success_rate']:.1%}
-- Processing Time: {stats.get('total_time', 0):.1f}s
+                processed_articles = await self.process_articles_smart(articles)
+                segments = self.create_broadcast_segments(processed_articles)
 
-## Script
-{script}
+                if not segments:
+                    self.logger.info("No newsworthy segments created from the latest articles.")
+                else:
+                    self.logger.info(f"Generated {len(segments)} new broadcast segments.")
+                    
+                    # Generate and queue audio for each segment one-by-one
+                    for i, segment in enumerate(segments):
+                        self.logger.info(f"Processing segment {i+1}/{len(segments)}: {segment.topic}")
+                        
+                        # Generate the script for this single segment
+                        script_intro = f"Now, an update on {segment.topic}." if i > 0 else f"Welcome to your live news briefing. First up, {segment.topic}."
+                        segment_script = await self.generate_segment_script(segment)
+                        full_script = self.clean_script_for_tts(f"{script_intro} {segment_script}")
+                        
+                        # Generate audio and add it to the queue
+                        await self.generate_and_queue_audio(full_script)
+                        
+                        # Save a record of the script
+                        self.save_results(full_script, [segment], f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
 
-## Sources
-"""
+                self.logger.info(f"Finished processing current batch. Waiting for {fetch_interval_minutes} minutes before next fetch.")
+                await asyncio.sleep(fetch_interval_minutes * 60)
 
-        for i, segment in enumerate(segments, 1):
-            content += f"\n### {i}. {segment.topic} (Score: {segment.importance:.2f})\n"
-            for article in segment.articles:
-                content += f"- {article.title} ({article.source}) - Relevancy: {article.relevancy_score:.1f}/10\n"
-
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-
-    async def run(self):
-        """Streamlined main pipeline"""
-        start_time = datetime.now()
-        self.logger.info("Starting news generation pipeline")
-
-        try:
-            # Fetch and process
-            articles = await self.fetch_feeds_batch()
-            self.logger.info(f"Fetched {len(articles)} articles")
-            self.performance_monitor.metrics['articles_processed'] = len(articles)
-
-            if not articles:
-                self.logger.warning("No articles found")
-                return
-
-            processed_articles = await self.process_articles_smart(articles)
-            segments = self.create_broadcast_segments(processed_articles)
-            script = await self.generate_broadcast_script(segments)
-
-            # Generate outputs
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            md_file = f"news_{timestamp}.md"
-            mp3_file = f"news_{timestamp}.mp3"
-
-            self.save_results(script, segments, md_file)
-            await self.generate_audio_smart(script, mp3_file)
-
-            duration = (datetime.now() - start_time).total_seconds()
-            self.logger.info(f"Pipeline completed in {duration:.1f}s")
-            self.logger.info(f"Files: {md_file}, {mp3_file}")
-
-        except Exception as e:
-            self.logger.error(f"Pipeline error: {e}")
-            raise
+            except Exception as e:
+                self.logger.error(f"An error occurred in the main loop: {e}", exc_info=True)
+                self.logger.info("Restarting loop after a 5-minute cooldown.")
+                await asyncio.sleep(300) # Wait 5 minutes before retrying
 
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate news broadcasts from RSS feeds.")
+    parser = argparse.ArgumentParser(description="Generate a continuous news broadcast stream.")
     parser.add_argument("--topic", type=str, help="Optional topic to filter and focus news generation.")
     parser.add_argument("--guidance", type=str, help="Optional guidance for refining the news script.")
-    parser.add_argument("--relevancy_threshold", type=int, default=5,
-                        help="Minimum relevancy score (0-10) for articles to be included when a topic is provided. Default is 5.")
-
+    parser.add_argument("--fetch_interval", type=int, default=15, help="Minutes to wait between fetching new feeds.")
+    
     args = parser.parse_args()
 
-    generator = NewsGenerator(topic=args.topic, guidance=args.guidance)
-    generator.relevancy_threshold = args.relevancy_threshold
+    # 1. Create the shared queue
+    audio_queue = queue.Queue()
 
-    asyncio.run(generator.run())
+    # 2. Create and start the audio player thread
+    player_thread = threading.Thread(target=play_audio_from_queue, args=(audio_queue,), daemon=True)
+    player_thread.start()
+
+    # 3. Initialize the NewsGenerator with the queue
+    generator = NewsGenerator(
+        audio_queue=audio_queue,
+        topic=args.topic,
+        guidance=args.guidance
+    )
+    
+    # 4. Start the continuous news generation loop
+    logging.info("Starting the news generator. Press Ctrl+C to stop.")
+    try:
+        asyncio.run(generator.run_continuous(fetch_interval_minutes=args.fetch_interval))
+    except KeyboardInterrupt:
+        logging.info("Shutting down the news generator.")
 
 if __name__ == "__main__":
     main()
