@@ -352,7 +352,7 @@ class NewsGenerator:
         if not self.circuit_breaker.can_execute():
             return article.content[:150] + "..."
 
-        prompt = f"Summarize in 2 sentences: {article.title}\n{article.content[:500]}"
+        prompt = f"Summarize in 6 sentences: {article.title}\n{article.content[:500]}"
 
         try:
             async with session.post(
@@ -361,7 +361,7 @@ class NewsGenerator:
                     'model': CONFIG["models"]["summary_model"],
                     'prompt': prompt,
                     'stream': False,
-                    'options': {'temperature': 0.3, 'max_tokens': 100}
+                    'options': {'temperature': 0.3, 'max_tokens': 10000}
                 },
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
@@ -577,7 +577,7 @@ class NewsGenerator:
         prompt = f"""Write a news segment about {segment.topic}. Use this information:
 {context}
 
-Write 2-3 sentences in a concise, news anchor style, focusing directly on the news. Avoid conversational filler phrases."""
+Write 5-6 sentences in a concise, news anchor style, focusing directly on the news. Avoid conversational filler phrases such as meanwhile or other similar transition words."""
 
         if self.guidance:
             prompt += f"\n\nGuidance for script generation: {self.guidance}"
@@ -590,7 +590,7 @@ Write 2-3 sentences in a concise, news anchor style, focusing directly on the ne
                         'model': CONFIG["models"]["broadcast_model"],
                         'prompt': prompt,
                         'stream': False,
-                        'options': {'temperature': 0.4, 'max_tokens': 300}
+                        'options': {'temperature': 0.4, 'max_tokens': 30000}
                     },
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
