@@ -1,23 +1,23 @@
 feeds:
-  # Original List (Working)
-  - "http://feeds.bbci.co.uk/news/world/rss.xml"
-  - "https://www.theguardian.com/world/rss"
-  - "https://feeds.npr.org/1004/rss.xml"
-  - "https://www.aljazeera.com/xml/rss/all.xml"
-  - "https://www.thehindu.com/news/international/?service=rss"
-  - "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms"
-  - "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6511"
-  - "https://news.un.org/feed/subscribe/en/news/all/rss.xml"
-  - "https://theintercept.com/feed/?rss"
-  - "https://globalvoices.org/feed/"
-  - "https://www.smh.com.au/rss/world.xml"
-  - "https://www.abc.net.au/news/feed/51120/rss.xml"
-
-  # Additional Reputable International News Sources (Working)
-  - "https://feeds.nytimes.com/nyt/rss/World" # New York Times World News
-  - "https://www.lemonde.fr/rss/une.xml" # Le Monde (France, general news)
-  - "https://www.france24.com/en/rss" # France 24 (English, general news)
-  - "https://rss.dw.com/rdf/rss-en-all" # Deutsche Welle (Germany, English, all news)
-  - "https://www.scmp.com/rss/91/feed" # South China Morning Post (Hong Kong, general news)
-  - "https://www.japantimes.co.jp/feed/" # Japan Times (Japan, general news)
-  - "https://www.theage.com.au/rss/world.xml" # The Age (Australia, World News)
+    - "http://feeds.bbci.co.uk/news/world/rss.xml"          # BBC World
+    - "https://www.theguardian.com/world/rss"              # The Guardian
+    - "https://feeds.npr.org/1004/rss.xml"                 # NPR World
+    - "https://www.aljazeera.com/xml/rss/all.xml"          # Al Jazeera
+    - "https://news.un.org/feed/subscribe/en/news/all/rss.xml" # UN News
+    - "https://theintercept.com/feed/?rss"                 # The Intercept
+    - "https://globalvoices.org/feed/"                     # Global Voices
+    - "https://www.thehindu.com/news/international/?service=rss" # The Hindu
+    - "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms" # Times of India
+    - "https://www.scmp.com/rss/91/feed"                   # South China Morning Post
+    - "https://www.chinadaily.com.cn/rss/world_rss.xml"     # China Daily
+    - "https://www.japantimes.co.jp/feed/"                 # The Japan Times
+    - "https://www.lemonde.fr/rss/une.xml"                 # Le Monde
+    - "https://www.france24.com/en/rss"                     # France 24
+    - "https://rss.dw.com/rdf/rss-en-all"                  # Deutsche Welle
+    - "https://www.spiegel.de/international/index.rss"     # Der Spiegel
+    - "https://www.rt.com/rss/news/"                       # RT (Russia)
+    - "https://feeds.nytimes.com/nyt/rss/World"            # NY Times
+    - "https://www.smh.com.au/rss/world.xml"               # Sydney Morning Herald
+    - "https://www.abc.net.au/news/feed/51120/rss.xml"     # ABC Australia
+    - "https://www.iranintl.com/en/feed"                   # Iran International
+    - "https://tass.com/rss/v2.xml"                        # TASS (Russia)

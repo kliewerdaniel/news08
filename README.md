@@ -109,19 +109,19 @@ You can customize the broadcast behavior using command-line arguments:
 
   * To run a general news broadcast:
     ```bash
-    python news_generator.py
+    python main.py
     ```
   * To get news focused on "Space Exploration":
     ```bash
-    python news_generator.py --topic "Space Exploration"
+    python main.py --topic "Space Exploration"
     ```
   * To get news with a "concise and formal" tone:
     ```bash
-    python news_generator.py --guidance "Keep the tone concise and formal."
+    python main.py --guidance "Keep the tone concise and formal."
     ```
   * To fetch news every 30 minutes:
     ```bash
-    python news_generator.py --fetch_interval 30
+    python main.py --fetch_interval 30
     ```
 
 -----
@@ -159,7 +159,7 @@ You can customize the broadcast behavior using command-line arguments:
 
 ```
 .
-├── news_generator.py         # Main script containing the NewsGenerator class and logic
+├── main.py         # Main script containing the NewsGenerator class and logic
 ├── feeds.yaml                # Configuration file for RSS feed URLs (user-defined)
 ├── news.log                  # Log file for application events
 ├── news_cache.db             # SQLite database for caching processed article hashes
