@@ -148,14 +148,14 @@ def play_audio_from_queue(audio_queue: queue.Queue):
 
 class NewsGenerator:
     def __init__(self, audio_queue: queue.Queue, feeds_file: str = "feeds.yaml", topic: Optional[str] = None, guidance: Optional[str] = None):
-        self.audio_queue = audio_queue # Add this line
+        self.audio_queue = audio_queue
         self.feeds_file = feeds_file
         self.db_path = "news_cache.db"
         self.circuit_breaker = CircuitBreaker()
         self.performance_monitor = PerformanceMonitor()
         self.topic = topic
         self.guidance = guidance
-        self.relevancy_threshold = 5 # Default threshold
+        self.relevancy_threshold = 5
         self.setup_logging()
         self.setup_database()
         self.setup_nlp()
@@ -512,7 +512,7 @@ class NewsGenerator:
                 continue
 
             cluster_articles.sort(key=lambda x: x.importance_score, reverse=True)
-            topic = self.extract_topic(cluster_articles[:2]) # Use cluster_articles for topic extraction
+            topic = self.extract_topic(cluster_articles[:2])
             selected_articles = cluster_articles[:2]
             avg_importance = np.mean([a.importance_score for a in selected_articles])
 
@@ -532,26 +532,22 @@ class NewsGenerator:
         if not articles:
             return "General News"
 
-        # If a specific topic is provided, use it
         if self.topic:
             return self.topic
 
-        # Extract key words from titles
         all_words = []
         for article in articles:
             words = re.findall(r'\b[A-Z][a-z]+\b', article.title)
             all_words.extend(words)
 
         if all_words:
-            # Return most common capitalized word
             word_counts = {}
             for word in all_words:
                 word_counts[word] = word_counts.get(word, 0) + 1
             return max(word_counts, key=word_counts.get)
 
-        return articles[0].title.split()[:2] # Fallback to first two words of the first article's title
+        return articles[0].title.split()[:2]
 
-    # In NewsGenerator class, replace generate_audio_smart with this:
     async def generate_and_queue_audio(self, script: str):
         """Generates audio from a script and puts it into the queue."""
         if not edge_tts_available:
@@ -562,13 +558,11 @@ class NewsGenerator:
             self.logger.info("Generating audio for a new segment...")
             communicate = edge_tts.Communicate(script, "en-US-JennyNeural")
             
-            # Stream the audio into an in-memory buffer
             audio_buffer = io.BytesIO()
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
                     audio_buffer.write(chunk["data"])
             
-            # Rewind the buffer and put its content into the queue
             audio_buffer.seek(0)
             self.audio_queue.put(audio_buffer.read())
             self.logger.info("Audio segment added to the playback queue.")
@@ -577,15 +571,14 @@ class NewsGenerator:
             self.logger.error(f"Failed to generate or queue audio: {e}")
 
     async def generate_segment_script(self, segment: BroadcastSegment) -> str:
-        """Generate segment script"""
+        """Generate segment script for a given topic and context."""
         context = "\n".join([f"{a.title}: {a.summary}" for a in segment.articles])
 
         prompt = f"""Write a news segment about {segment.topic}. Use this information:
 {context}
 
-Write 2-3 sentences in news anchor style. Start directly with the news:"""
+Write 2-3 sentences in a concise, news anchor style, focusing directly on the news. Avoid conversational filler phrases."""
 
-        # Add guidance to the prompt if available
         if self.guidance:
             prompt += f"\n\nGuidance for script generation: {self.guidance}"
 
@@ -612,7 +605,34 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
             self.logger.error(f"Network error during script generation LLM call: {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error during script generation LLM call: {e}")
-        return "Failed to generate news segment." # Fallback
+        return "Failed to generate news segment."
+
+    async def generate_transition_phrase(self, previous_topic: str, current_topic: str) -> str:
+        """Generates a natural transition phrase between two news topics."""
+        prompt = f"""You are a news anchor. Generate a short, smooth transition phrase (1-2 sentences) from a news segment about '{previous_topic}' to a new segment about '{current_topic}'.
+        
+        Example: "Moving on from politics, let's turn our attention to the latest in tech." or "And now, for something completely different, here's an update on local events."
+        
+        Avoid using the word 'meanwhile'. Focus on natural flow."""
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{CONFIG['ollama_api']['base_url']}/api/generate",
+                    json={
+                        'model': CONFIG["models"]["broadcast_model"],
+                        'prompt': prompt,
+                        'stream': False,
+                        'options': {'temperature': 0.6, 'max_tokens': 50} # Keep transitions short
+                    },
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    return data['response'].strip()
+        except Exception as e:
+            self.logger.error(f"Failed to generate transition phrase: {e}")
+            return "Next, in the news." # Fallback transition
 
     async def refine_script(self, session: aiohttp.ClientSession, script: str, guidance: str) -> str:
         """Refine the full script based on guidance."""
@@ -637,9 +657,9 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
 
     def clean_script_for_tts(self, script: str) -> str:
         """Clean script for better TTS playback"""
-        script = re.sub(r'\[.*?\]', '', script)  # Remove text in brackets
-        script = re.sub(r'\s+', ' ', script).strip() # Remove extra whitespace
-        script = script.replace('...', '...') # Ensure ellipses are handled correctly
+        script = re.sub(r'\[.*?\]', '', script)
+        script = re.sub(r'\s+', ' ', script).strip()
+        script = script.replace('...', '...')
         return script
 
     def save_results(self, script: str, segments: List[BroadcastSegment], filename: str):
@@ -666,13 +686,14 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
 
         self.logger.info(f"Broadcast log saved to {filepath}")
 
-    # In NewsGenerator class, replace the 'run' method with this:
     async def run_continuous(self, fetch_interval_minutes: int = 15):
         """
         Main continuous loop to fetch, process, and generate news audio.
         """
         self.logger.info("Starting continuous news generation stream.")
         
+        previous_topic = None
+
         while True:
             try:
                 self.logger.info("Fetching new batch of articles...")
@@ -692,20 +713,25 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
                 else:
                     self.logger.info(f"Generated {len(segments)} new broadcast segments.")
                     
-                    # Generate and queue audio for each segment one-by-one
                     for i, segment in enumerate(segments):
                         self.logger.info(f"Processing segment {i+1}/{len(segments)}: {segment.topic}")
                         
-                        # Generate the script for this single segment
-                        script_intro = f" {segment.topic}." if i > 0 else f"Welcome to your live news briefing. First up, {segment.topic}."
+                        # Generate the intro or transition
+                        if i == 0:
+                            intro_phrase = f"Welcome to your live news briefing. First up, {segment.topic}."
+                        else:
+                            # Generate a dynamic transition phrase
+                            transition_phrase = await self.generate_transition_phrase(previous_topic, segment.topic)
+                            intro_phrase = f"{transition_phrase} Now, {segment.topic}."
+
                         segment_script = await self.generate_segment_script(segment)
-                        full_script = self.clean_script_for_tts(f"{script_intro} {segment_script}")
+                        full_script = self.clean_script_for_tts(f"{intro_phrase} {segment_script}")
                         
-                        # Generate audio and add it to the queue
                         await self.generate_and_queue_audio(full_script)
                         
-                        # Save a record of the script
                         self.save_results(full_script, [segment], f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+                        
+                        previous_topic = segment.topic # Update previous topic for next iteration
 
                 self.logger.info(f"Finished processing current batch. Waiting for {fetch_interval_minutes} minutes before next fetch.")
                 await asyncio.sleep(fetch_interval_minutes * 60)
@@ -713,7 +739,7 @@ Write 2-3 sentences in news anchor style. Start directly with the news:"""
             except Exception as e:
                 self.logger.error(f"An error occurred in the main loop: {e}", exc_info=True)
                 self.logger.info("Restarting loop after a 5-minute cooldown.")
-                await asyncio.sleep(300) # Wait 5 minutes before retrying
+                await asyncio.sleep(300)
 
 def main():
     import argparse
@@ -725,21 +751,17 @@ def main():
     
     args = parser.parse_args()
 
-    # 1. Create the shared queue
     audio_queue = queue.Queue()
 
-    # 2. Create and start the audio player thread
     player_thread = threading.Thread(target=play_audio_from_queue, args=(audio_queue,), daemon=True)
     player_thread.start()
 
-    # 3. Initialize the NewsGenerator with the queue
     generator = NewsGenerator(
         audio_queue=audio_queue,
         topic=args.topic,
         guidance=args.guidance
     )
     
-    # 4. Start the continuous news generation loop
     logging.info("Starting the news generator. Press Ctrl+C to stop.")
     try:
         asyncio.run(generator.run_continuous(fetch_interval_minutes=args.fetch_interval))
