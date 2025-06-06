@@ -42,10 +42,10 @@ CONFIG = {
         "embedding_model": "nomic-embed-text"
     },
     "processing": {
-        "max_articles_per_feed": 8,
+        "max_articles_per_feed": 80,
         "min_article_length": 100,
         "max_clusters": 50,
-        "target_segments": 25
+        "target_segments": 2500
     },
     "output": {"max_broadcast_length": 900000000}
 }
